@@ -1,0 +1,18 @@
+name: realm-sec
+description: >
+  US SEC filings as a graph-joinable source. Resolve a registrant by TICKER or CIK — never by
+  name — then pull its filing index from EDGAR and ingest the documents themselves, so a 10-K's
+  climate and risk disclosure becomes searchable text with provenance rather than a link.
+  EDGAR is free, keyless and authoritative, and it indexes by CIK: it has no domain index and no
+  website field, so joining it to a domain-keyed corpus REQUIRES an external identity bridge.
+  This realm refuses to invent one. Company-name matching against 8,000 registrants produces
+  confident nonsense — imperial-tobacco.co.uk matches Canadian Imperial Bank of Commerce,
+  mitsui.com matches Sumitomo Mitsui, axa.com matches Axalta Coating Systems — and a filing
+  carries audited figures, so a wrong attribution looks maximally authoritative.
+version: 0.1.0
+author: Embabel
+url: https://github.com/embabel/realm-sec
+tags: [sec, edgar, filings, disclosure, united-states]
+exports:
+  - SecRegistrant
+  - SecFiling

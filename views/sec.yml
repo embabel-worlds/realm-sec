@@ -1,0 +1,46 @@
+# Reads only what this realm stores. Deliberately does NOT reference another realm's labels: the
+# join to an ESG corpus happens through the `domain:` tag both realms put on ingested documents,
+# so realm-sec stays installable on its own.
+
+- name: SecRegistrants
+  description: >-
+    Registrants resolved so far, with the domain a caller asserted for each. `domain` is the
+    CALLER'S claim — EDGAR has no website field — so it is the line where a wrong identity would
+    enter, and it is worth reading before trusting any join built on it.
+  cypher: |
+    MATCH (r:SecRegistrant)
+    OPTIONAL MATCH (f:SecFiling {cik: r.cik})
+    RETURN r.cik AS cik, r.ticker AS ticker, r.name AS name,
+           r.sicDescription AS sicIndustry, r.exchange AS exchange,
+           r.domain AS assertedDomain, count(f) AS filingsIndexed
+    ORDER BY r.name
+
+- name: SecFilings
+  description: >-
+    One registrant's indexed filings, newest first. A 10-K carries the climate and risk discussion;
+    a 20-F is its foreign-issuer equivalent. `ingested` says whether the document itself is in the
+    corpus — an index row is a pointer, and only an ingested document can be quoted from.
+  params:
+    cik:
+      type: string
+      description: "Ten-digit CIK, as stored on the registrant."
+  cypher: |
+    MATCH (f:SecFiling {cik: $cik})
+    RETURN f.form AS form, f.filingDate AS filed, f.primaryDocumentUrl AS document,
+           f.ingested AS ingested, f.accessionNumber AS accession
+    ORDER BY f.filingDate DESC
+
+- name: SecFilingCoverage
+  description: >-
+    What this realm holds per registrant and how much of it has actually been read. The honest
+    denominator for any claim built on filings: an indexed filing that was never ingested supports
+    nothing, and the gap between the two columns is the work outstanding.
+  cypher: |
+    MATCH (f:SecFiling)
+    OPTIONAL MATCH (r:SecRegistrant {cik: f.cik})
+    RETURN coalesce(r.name, f.cik) AS registrant,
+           coalesce(r.assertedDomain, r.domain, '(no domain asserted)') AS domain,
+           count(f) AS indexed,
+           sum(CASE WHEN f.ingested THEN 1 ELSE 0 END) AS ingested,
+           collect(DISTINCT f.form)[0..5] AS forms
+    ORDER BY indexed DESC
