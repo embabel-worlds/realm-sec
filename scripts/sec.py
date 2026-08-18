@@ -17,7 +17,7 @@ good as its own guard. Pass --domain only when you have checked it.
 
 EDGAR requires a descriptive User-Agent and rate-limits to ~10 req/s; both are honoured here.
 """
-import argparse, base64, json, os, sys, time, urllib.request
+import argparse, base64, json, os, re, sys, time, urllib.request
 
 BASE = os.environ.get("EMBABEL_URL", "http://localhost:8042").rstrip("/")
 H = {"Content-Type": "application/json",
@@ -47,6 +47,37 @@ def cik_for_ticker(ticker: str):
         if v["ticker"].upper() == ticker.upper():
             return str(v["cik_str"]).zfill(10), v["title"]
     return None, None
+
+
+def cmd_lookup(args) -> int:
+    """Find candidate registrants by ticker or name, and PRESENT them rather than choosing.
+
+    Refusing to fuzzy-match a domain does not mean refusing to look a company up. The defect was
+    silent SELECTION — a pipeline that quietly attached Canadian Imperial Bank of Commerce to
+    imperial-tobacco.co.uk. A lookup that shows every candidate and makes a person choose has the
+    opposite property: ambiguity becomes visible instead of resolved by luck.
+
+    An exact ticker is unambiguous and is reported as such. A name search is a search, and
+    "IBM" matching both the ticker and the registrant name is exactly the easy case.
+    """
+    q = args.query.strip()
+    rows = list(edgar("https://www.sec.gov/files/company_tickers.json").values())
+    exact_ticker = [v for v in rows if v["ticker"].upper() == q.upper()]
+    by_name = [v for v in rows if q.lower() in v["title"].lower()][:12]
+    if exact_ticker:
+        v = exact_ticker[0]
+        print(f"  EXACT TICKER  {v['ticker']:8}{v['title'][:52]:54}CIK {str(v['cik_str']).zfill(10)}")
+    others = [v for v in by_name if not exact_ticker or v["cik_str"] != exact_ticker[0]["cik_str"]]
+    if others:
+        print(f"  {len(others)} name match(es) — a NAME is not an identity; pick one deliberately:")
+        for v in others:
+            print(f"    {v['ticker']:8}{v['title'][:52]:54}CIK {str(v['cik_str']).zfill(10)}")
+    if not exact_ticker and not others:
+        print(f"  no registrant matches '{q}' — it may not be SEC-registered at all")
+        return 1
+    if not exact_ticker and len(others) > 1:
+        print("\n  AMBIGUOUS. Resolve with the ticker of the one you mean, not this query.")
+    return 0
 
 
 def cmd_resolve(args) -> int:
@@ -86,21 +117,44 @@ def cmd_filings(args) -> int:
         if not args.ingest:
             continue
         try:
-            # Ingested under the registrant's domain when one was asserted, so the filing lands in
-            # the same corpus as that company's web pages and reports and joins on the same key.
-            body = {"url": url, "tags": ["sec", f"form:{f['form']}"]}
-            if args.domain:
-                body["fromOrgDomain"] = args.domain
-                body["tags"] += ["esg", f"domain:{args.domain}"]
-            print(f"       -> {post('/api/v1/documents/url', body).get('status')}")
+            print(f"       -> {ingest_filing(url, f, args.domain)}")
         except Exception as e:
             print(f"       -> ingest failed: {str(e)[:70]}", file=sys.stderr)
     return 0
 
 
+TAG = re.compile(r"<[^>]+>")
+WS = re.compile(r"\s+")
+
+
+def ingest_filing(url: str, f: dict, domain: str | None) -> str:
+    """Fetch the filing OURSELVES and post the text.
+
+    The server cannot fetch this. SEC requires a User-Agent that identifies the caller AND carries
+    a contact address, and rejects anything else with 403 — measured: "Mozilla/5.0" and a bare
+    "embabel research" both 403, while "Embabel Research contact@embabel.com" returns 3.5 MB. A 403
+    reaches the caller as HTTP 500 from /api/v1/documents/url, which is why filings looked like an
+    ingestion bug rather than a policy one.
+
+    The document name carries the DOMAIN because /documents/text takes no fromOrgDomain, and the
+    ESG views key on the document uri — so the name is what lets a filing join a company's web
+    pages and reports.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        raw = r.read().decode("utf-8", errors="replace")
+    text = WS.sub(" ", TAG.sub(" ", raw)).strip()
+    stem = (domain + "-") if domain else ""
+    name = f"{stem}{f['form']}-{f['filingDate']}.txt".replace("/", "-")
+    tags = ["sec", f"form:{f['form']}"] + (["esg", f"domain:{domain}"] if domain else [])
+    res = post("/api/v1/documents/text", {"name": name, "content": text, "tags": tags}, timeout=600)
+    return f"{res.get('status')} — {name}, {len(text):,} chars"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
+    l = sub.add_parser("lookup"); l.add_argument("query"); l.set_defaults(fn=cmd_lookup)
     r = sub.add_parser("resolve"); r.add_argument("ticker"); r.add_argument("--domain")
     r.set_defaults(fn=cmd_resolve)
     f = sub.add_parser("filings"); f.add_argument("cik")
