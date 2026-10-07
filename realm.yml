@@ -12,6 +12,7 @@ description: >
 version: 0.1.0
 author: Embabel
 url: https://github.com/embabel/realm-sec
+category: compliance
 tags: [sec, edgar, filings, disclosure, united-states]
 exports:
   - SecRegistrant
