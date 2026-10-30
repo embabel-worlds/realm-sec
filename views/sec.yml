@@ -39,7 +39,7 @@
     MATCH (f:SecFiling)
     OPTIONAL MATCH (r:SecRegistrant {cik: f.cik})
     RETURN coalesce(r.name, f.cik) AS registrant,
-           coalesce(r.assertedDomain, r.domain, '(no domain asserted)') AS domain,
+           coalesce(r.domain, '(no domain asserted)') AS domain,
            count(f) AS indexed,
            sum(CASE WHEN f.ingested THEN 1 ELSE 0 END) AS ingested,
            collect(DISTINCT f.form)[0..5] AS forms
